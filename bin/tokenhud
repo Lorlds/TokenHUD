@@ -31,6 +31,7 @@ usage() {
   cat <<'EOF'
 usage: tokenhud [tmux|compact|full|json|models|styles|adapters] [cwd] [SESSION_JSONL]
        tokenhud init [bash|zsh]
+       tokenhud launch <cli> [args...]
        tokenhud cache-refresh [cwd]
        tokenhud prices-check
        tokenhud --version
@@ -58,6 +59,8 @@ Environment:
                        set 0 to skip the recent scan and scan the full JSONL
   TOKENHUD_CACHE_TTL   prompt cache refresh interval in seconds, default 2
   TOKENHUD_SESSION_SCAN_LIMIT   max sessions to scan for cwd matching, default 0 for all
+  TOKENHUD_LAUNCH_TMUX   set to 0 to disable launch auto-tmux, default 1
+  TOKENHUD_LAUNCH_SESSION_PREFIX tmux session prefix for launch, default tokenhud
 
 Compatibility:
   codexhud remains an alias for tokenhud's Codex adapter.
@@ -67,7 +70,7 @@ EOF
 
 mode="${1:-tmux}"
 case "$mode" in
-  tmux|compact|full|json|models|styles|adapters|init|cache-refresh|cache-key|prices-check) shift || true ;;
+  tmux|compact|full|json|models|styles|adapters|init|launch|cache-refresh|cache-key|prices-check) shift || true ;;
   -h|--help) usage; exit 0 ;;
   -V|--version|version) printf 'tokenhud %s\n' "$version"; exit 0 ;;
   *)
@@ -264,6 +267,28 @@ EOF
 if [ "$mode" = "init" ]; then
   print_init "${cwd_arg:-bash}"
   exit $?
+fi
+
+if [ "$mode" = "launch" ]; then
+  cli="${cwd_arg:-}"
+  [ -n "$cli" ] || {
+    printf 'tokenhud: launch requires a CLI command\n' >&2
+    exit 2
+  }
+  shift || true
+  if ! command -v "$cli" >/dev/null 2>&1; then
+    printf 'tokenhud: CLI command not found: %s\n' "$cli" >&2
+    exit 127
+  fi
+  if [ -n "${TMUX:-}" ] || [ "$(env_or_compat TOKENHUD_LAUNCH_TMUX CODEXHUD_LAUNCH_TMUX 1)" = "0" ] || ! command -v tmux >/dev/null 2>&1; then
+    exec "$cli" "$@"
+  fi
+  session_prefix="$(env_or_compat TOKENHUD_LAUNCH_SESSION_PREFIX CODEXHUD_LAUNCH_SESSION_PREFIX tokenhud)"
+  session_key="$(hash_key_for_path "$PWD")"
+  session_name="${session_prefix}-${cli}-${session_key}"
+  cmd=""
+  printf -v cmd '%q ' "$cli" "$@"
+  exec tmux new-session -A -s "$session_name" -c "$PWD" "$cmd"
 fi
 
 if [ "$mode" = "cache-key" ]; then

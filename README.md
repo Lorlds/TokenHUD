@@ -48,6 +48,7 @@ tokenhud adapters
 tokenhud models
 tokenhud prices-check
 tokenhud styles
+tokenhud launch codex
 tokenhud init bash
 tokenhud init zsh
 ```
@@ -69,8 +70,34 @@ TOKENHUD_PRICES_CHECK_FETCH=1 # optional URL reachability probes
 TOKENHUD_TAIL_LINES=500    # 0 scans the full JSONL directly
 TOKENHUD_CACHE_TTL=2
 TOKENHUD_SESSION_SCAN_LIMIT=0 # 0 scans all sessions when matching cwd
+TOKENHUD_LAUNCH_TMUX=1        # launch opens tmux when outside tmux
+TOKENHUD_LAUNCH_SESSION_PREFIX=tokenhud
 CODEX_HOME=~/.codex          # override Codex home
 ```
+
+## Always-On Launch
+
+For plain terminals, Codex owns the screen while its TUI is running, so a prompt
+hook cannot draw above the input box. Use `tokenhud launch` to start the CLI in
+a tmux session where TokenHUD can stay visible in the statusline:
+
+```bash
+tokenhud launch codex
+```
+
+The launcher runs the command directly when already inside tmux. Outside tmux,
+it creates or attaches a per-directory session named like
+`tokenhud-codex-<key>`.
+
+Shell wrapper:
+
+```bash
+codex() {
+  tokenhud launch codex "$@"
+}
+```
+
+Set `TOKENHUD_LAUNCH_TMUX=0` to bypass auto-tmux.
 
 ## Shell Prompt
 
