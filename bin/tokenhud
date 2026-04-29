@@ -383,15 +383,26 @@ if [ "$mode" = "status" ]; then
   if [ -r "$status_cache" ]; then
     IFS= read -r line <"$status_cache" || true
   fi
-  [ -n "$line" ] && printf '%s\n' "$line"
+  if [ -n "$line" ]; then
+    printf '%s\n' "$line"
+  else
+    printf 'TH loading\n'
+  fi
 
   ttl="$(env_or_compat TOKENHUD_CACHE_TTL CODEXHUD_CACHE_TTL 2)"
   case "$ttl" in ''|*[!0-9]*) ttl=2 ;; esac
   now="$(date +%s)"
   mtime="$(file_mtime "$status_cache")"
-  if [ "$((now - mtime))" -ge "$ttl" ]; then
-    : >"$status_cache" 2>/dev/null || true
-    ( TOKENHUD_CACHE_FILE="$status_cache" "$0" cache-refresh "$status_cwd" >/dev/null 2>&1 ) &
+  status_lock="${status_cache}.lock"
+  lock_ttl="$(env_or_compat TOKENHUD_REFRESH_LOCK_TTL CODEXHUD_REFRESH_LOCK_TTL 30)"
+  case "$lock_ttl" in ''|*[!0-9]*) lock_ttl=30 ;; esac
+  lock_mtime="$(file_mtime "$status_lock")"
+  if [ "$((now - mtime))" -ge "$ttl" ] && { [ ! -e "$status_lock" ] || [ "$((now - lock_mtime))" -ge "$lock_ttl" ]; }; then
+    : >"$status_lock" 2>/dev/null || true
+    (
+      TOKENHUD_CACHE_FILE="$status_cache" "$0" cache-refresh "$status_cwd" >/dev/null 2>&1 || true
+      rm -f "$status_lock"
+    ) &
   fi
   exit 0
 fi
