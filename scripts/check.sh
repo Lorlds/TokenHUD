@@ -57,7 +57,7 @@ export PATH="$stub_bin:$PATH"
 "$bin" adapters >/dev/null
 "$bin" models >/dev/null
 "$bin" prices-check >/dev/null
-TOKENHUD_LAUNCH_TMUX=0 "$bin" launch true >/dev/null
+TOKENHUD_LAUNCH_TMUX=0 TOKENHUD_TMUX_STATUS=0 "$bin" launch true >/dev/null
 "$bin" status /tmp/tokenhud-target >/dev/null
 "$bin" init bash >/dev/null
 "$bin" init zsh >/dev/null

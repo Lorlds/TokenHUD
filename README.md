@@ -60,6 +60,7 @@ Useful environment variables:
 
 ```bash
 TOKENHUD_STYLE=balanced   # balanced|minimal|ledger|risk|executive|focus|ascii
+TOKENHUD_ADAPTER=codex    # non-Codex adapters render as pending until implemented
 TOKENHUD_MODEL=gpt-5.5    # override model detection for the active adapter
 TOKENHUD_ASCII=1          # force ASCII progress bars
 TOKENHUD_PROMPT=0         # temporarily disable shell prompt integration
@@ -70,9 +71,14 @@ TOKENHUD_PRICE_FILE=~/.tokenhud/prices.json
 TOKENHUD_PRICES_CHECK_FETCH=1 # optional URL reachability probes
 TOKENHUD_TAIL_LINES=500    # 0 scans the full JSONL directly
 TOKENHUD_CACHE_TTL=2
+TOKENHUD_STATUS_CACHE_TTL=30
+TOKENHUD_SESSION_SCAN_TTL=60
 TOKENHUD_SESSION_SCAN_LIMIT=0 # 0 scans all sessions when matching cwd
 TOKENHUD_LAUNCH_TMUX=1        # launch opens tmux when outside tmux
 TOKENHUD_LAUNCH_SESSION_PREFIX=tokenhud
+TOKENHUD_TMUX_STATUS=1        # launch sets a session-local tmux statusline
+TOKENHUD_TMUX_INTERVAL=5
+TOKENHUD_TMUX_RIGHT_LENGTH=180
 CODEX_HOME=~/.codex          # override Codex home
 ```
 
@@ -86,9 +92,9 @@ a tmux session where TokenHUD can stay visible in the statusline:
 tokenhud launch codex
 ```
 
-The launcher runs the command directly when already inside tmux. Outside tmux,
-it creates or attaches a per-directory session named like
-`tokenhud-codex-<key>`.
+The launcher sets a session-local tmux statusline for the AI CLI. It runs the
+command directly when already inside tmux. Outside tmux, it creates or attaches
+a per-directory session named like `tokenhud-codex-<key>`.
 
 Shell wrapper:
 
@@ -99,6 +105,7 @@ codex() {
 ```
 
 Set `TOKENHUD_LAUNCH_TMUX=0` to bypass auto-tmux.
+Set `TOKENHUD_TMUX_STATUS=0` if you want the launcher without the statusline.
 
 ## Shell Prompt
 
@@ -150,19 +157,27 @@ pricing registry, and distribution plan are in
 
 ## tmux
 
-One-line status-right example:
+Recommended: use `tokenhud launch <cli>`. That keeps TokenHUD scoped to the AI
+CLI session instead of running a global `status-right` command in every tmux
+pane.
+
+Manual session-local status-right example:
 
 ```tmux
 set -g status-interval 5
-set -g status-right "#{?#{==:#{pane_current_command},codex},#(TOKENHUD_STYLE=balanced ~/.local/bin/tokenhud status #{q:pane_current_path}) ,}%H:%M"
+set -g status-right "#(TOKENHUD_STYLE=balanced ~/.local/bin/tokenhud status #{q:pane_current_path}) %H:%M"
 ```
 
 Plugin-style entrypoint:
 
 ```tmux
 set -g @tokenhud_style "risk"
+set -g @tokenhud_adapter "codex"
 # Optional. If omitted, TokenHUD leaves your existing status-interval alone.
 set -g @tokenhud_interval "5"
+set -g @tokenhud_right_length "180"
+# Optional. Use "global" only if you explicitly want every tmux session to run it.
+set -g @tokenhud_scope "session"
 run-shell "/path/to/TokenHUD/tmux/tokenhud.tmux"
 ```
 

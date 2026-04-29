@@ -48,6 +48,7 @@ an official live quote.
 
 Environment:
   TOKENHUD_STYLE   balanced|minimal|ledger|risk|executive|focus|ascii
+  TOKENHUD_ADAPTER codex for implemented telemetry; other values render pending
   TOKENHUD_MODEL   override detected model for the active adapter
   TOKENHUD_ASCII   set to 1 for an ASCII progress bar
   TOKENHUD_PROMPT  set to 0 to disable prompt integration
@@ -59,9 +60,14 @@ Environment:
   TOKENHUD_TAIL_LINES   recent JSONL lines to scan before full fallback, default 500
                        set 0 to skip the recent scan and scan the full JSONL
   TOKENHUD_CACHE_TTL   prompt cache refresh interval in seconds, default 2
+  TOKENHUD_STATUS_CACHE_TTL statusline refresh interval in seconds, default 30
+  TOKENHUD_SESSION_SCAN_TTL seconds to reuse cached session path during refresh, default 60
   TOKENHUD_SESSION_SCAN_LIMIT   max sessions to scan for cwd matching, default 0 for all
   TOKENHUD_LAUNCH_TMUX   set to 0 to disable launch auto-tmux, default 1
   TOKENHUD_LAUNCH_SESSION_PREFIX tmux session prefix for launch, default tokenhud
+  TOKENHUD_TMUX_STATUS   set to 0 to disable launch session statusline, default 1
+  TOKENHUD_TMUX_INTERVAL tmux status interval for launch sessions, default 5
+  TOKENHUD_TMUX_RIGHT_LENGTH tmux right status width for launch sessions, default 180
 
 Compatibility:
   codexhud remains an alias for tokenhud's Codex adapter.
@@ -120,6 +126,38 @@ hash_key_for_path() {
     return 1
   fi
   printf '%.16s' "$key"
+}
+
+tmux_status_right() {
+  local adapter="${1:-codex}" style ttl binary
+  style="$(env_or_compat TOKENHUD_STYLE CODEXHUD_STYLE balanced)"
+  ttl="$(env_or_compat TOKENHUD_STATUS_CACHE_TTL CODEXHUD_STATUS_CACHE_TTL 30)"
+  case "$ttl" in ''|*[!0-9]*) ttl=30 ;; esac
+  binary="$(env_or_compat TOKENHUD_BINARY CODEXHUD_BINARY "$script_dir/tokenhud")"
+  printf '#[fg=#9ece6a]#(TOKENHUD_ADAPTER=%q TOKENHUD_STYLE=%q TOKENHUD_STATUS_CACHE_TTL=%q %q status #{q:pane_current_path}) #[fg=#7aa2f7]%%Y-%%m-%%d #[fg=#c0caf5]%%H:%%M' \
+    "$adapter" "$style" "$ttl" "$binary"
+}
+
+enable_tmux_status() {
+  local target="${1:-}" adapter="${2:-codex}" interval length right
+  [ "$(env_or_compat TOKENHUD_TMUX_STATUS CODEXHUD_TMUX_STATUS 1)" != "0" ] || return 0
+  command -v tmux >/dev/null 2>&1 || return 0
+
+  interval="$(env_or_compat TOKENHUD_TMUX_INTERVAL CODEXHUD_TMUX_INTERVAL 5)"
+  case "$interval" in ''|*[!0-9]*) interval=5 ;; esac
+  length="$(env_or_compat TOKENHUD_TMUX_RIGHT_LENGTH CODEXHUD_TMUX_RIGHT_LENGTH 180)"
+  case "$length" in ''|*[!0-9]*) length=180 ;; esac
+  right="$(tmux_status_right "$adapter")"
+
+  if [ -n "$target" ]; then
+    tmux set-option -t "$target" status-right "$right" >/dev/null 2>&1 || return 1
+    tmux set-option -t "$target" status-interval "$interval" >/dev/null 2>&1 || return 1
+    tmux set-option -t "$target" status-right-length "$length" >/dev/null 2>&1 || return 1
+  else
+    tmux set-option status-right "$right" >/dev/null 2>&1 || return 1
+    tmux set-option status-interval "$interval" >/dev/null 2>&1 || return 1
+    tmux set-option status-right-length "$length" >/dev/null 2>&1 || return 1
+  fi
 }
 
 print_init() {
@@ -282,6 +320,9 @@ if [ "$mode" = "launch" ]; then
     exit 127
   fi
   if [ -n "${TMUX:-}" ] || [ "$(env_or_compat TOKENHUD_LAUNCH_TMUX CODEXHUD_LAUNCH_TMUX 1)" = "0" ] || ! command -v tmux >/dev/null 2>&1; then
+    if [ -n "${TMUX:-}" ]; then
+      enable_tmux_status "" "$cli" || true
+    fi
     exec "$cli" "$@"
   fi
   session_prefix="$(env_or_compat TOKENHUD_LAUNCH_SESSION_PREFIX CODEXHUD_LAUNCH_SESSION_PREFIX tokenhud)"
@@ -289,7 +330,13 @@ if [ "$mode" = "launch" ]; then
   session_name="${session_prefix}-${cli}-${session_key}"
   cmd=""
   printf -v cmd '%q ' "$cli" "$@"
-  exec tmux new-session -A -s "$session_name" -c "$PWD" "$cmd"
+  if tmux has-session -t "$session_name" 2>/dev/null; then
+    enable_tmux_status "$session_name" "$cli" || true
+    exec tmux attach-session -t "$session_name"
+  fi
+  tmux new-session -d -s "$session_name" -c "$PWD" "$cmd"
+  enable_tmux_status "$session_name" "$cli" || true
+  exec tmux attach-session -t "$session_name"
 fi
 
 if [ "$mode" = "cache-key" ]; then
@@ -374,6 +421,12 @@ cache_gc() {
 }
 
 if [ "$mode" = "status" ]; then
+  status_adapter="$(env_or_compat TOKENHUD_ADAPTER CODEXHUD_ADAPTER codex)"
+  if [ "$status_adapter" != "codex" ]; then
+    printf 'TH %s:adapter-pending\n' "$status_adapter"
+    exit 0
+  fi
+
   status_cwd="${cwd_arg:-$PWD}"
   status_cache="$(env_or_compat TOKENHUD_CACHE_FILE CODEXHUD_CACHE_FILE "$(cache_file_for_cwd "$status_cwd")")"
   status_cache_dir="${status_cache%/*}"
@@ -389,8 +442,8 @@ if [ "$mode" = "status" ]; then
     printf 'TH loading\n'
   fi
 
-  ttl="$(env_or_compat TOKENHUD_CACHE_TTL CODEXHUD_CACHE_TTL 2)"
-  case "$ttl" in ''|*[!0-9]*) ttl=2 ;; esac
+  ttl="$(env_or_compat TOKENHUD_STATUS_CACHE_TTL CODEXHUD_STATUS_CACHE_TTL 30)"
+  case "$ttl" in ''|*[!0-9]*) ttl=30 ;; esac
   now="$(date +%s)"
   mtime="$(file_mtime "$status_cache")"
   status_lock="${status_cache}.lock"
@@ -403,6 +456,7 @@ if [ "$mode" = "status" ]; then
       TOKENHUD_CACHE_FILE="$status_cache" "$0" cache-refresh "$status_cwd" >/dev/null 2>&1 || true
       rm -f "$status_lock"
     ) &
+    disown "$!" 2>/dev/null || true
   fi
   exit 0
 fi
@@ -411,10 +465,35 @@ if [ "$mode" = "cache-refresh" ]; then
   require_commands jq awk git find sort tail date
   cache_cwd="${cwd_arg:-$PWD}"
   cache_file_for_refresh="$(env_or_compat TOKENHUD_CACHE_FILE CODEXHUD_CACHE_FILE "$(cache_file_for_cwd "$cache_cwd")")"
+  session_ref="${cache_file_for_refresh}.session"
+  scan_ref="${cache_file_for_refresh}.scan"
+  scan_ttl="$(env_or_compat TOKENHUD_SESSION_SCAN_TTL CODEXHUD_SESSION_SCAN_TTL 60)"
+  case "$scan_ttl" in ''|*[!0-9]*) scan_ttl=60 ;; esac
   mkdir -p "${cache_file_for_refresh%/*}"
   cache_gc
 
-  refresh_session="$(latest_session "$cache_cwd")"
+  refresh_session=""
+  cached_session=""
+  if [ -r "$session_ref" ]; then
+    IFS= read -r cached_session <"$session_ref" || true
+  fi
+  if [ -n "$cached_session" ] && [ -f "$cached_session" ]; then
+    cached_session_cwd="$(session_cwd_for "$cached_session")"
+    if [ "$cached_session_cwd" != "$cache_cwd" ]; then
+      cached_session=""
+    fi
+  fi
+  now="$(date +%s)"
+  scan_mtime="$(file_mtime "$scan_ref")"
+  if [ -n "$cached_session" ] && [ "$((now - scan_mtime))" -lt "$scan_ttl" ]; then
+    refresh_session="$cached_session"
+  else
+    refresh_session="$(latest_session "$cache_cwd")"
+    if [ -n "$refresh_session" ]; then
+      printf '%s\n' "$refresh_session" >"$session_ref" 2>/dev/null || true
+      touch "$scan_ref" 2>/dev/null || true
+    fi
+  fi
   if [ -n "$refresh_session" ] && [ -f "$refresh_session" ] && [ -s "$cache_file_for_refresh" ]; then
     session_mtime="$(file_mtime "$refresh_session")"
     price_mtime="$(file_mtime "$price_config_file")"
